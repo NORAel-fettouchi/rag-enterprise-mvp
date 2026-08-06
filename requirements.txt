@@ -1,0 +1,43 @@
+# === CORE DEPENDENCIES ===
+# Streamlit - Interface web rapide et intuitive
+streamlit>=1.28.0
+
+# === LANGCHAIN ECOSYSTEM ===
+# LangChain - Orchestration RAG standard industrie
+langchain>=0.1.0
+langchain-community>=0.0.10
+
+# === VECTOR STORE & EMBEDDINGS ===
+# FAISS - Vector store ultra-rapide (Facebook AI)
+faiss-cpu>=1.8.0
+# Sentence Transformers - Embeddings HuggingFace
+sentence-transformers>=2.2.2
+
+# === PDF PROCESSING ===
+# PyPDF - Extraction texte depuis PDF
+pypdf>=3.17.0
+
+# === ENVIRONMENT & CONFIG ===
+# Pydantic - Validation données + config
+pydantic>=2.4.0
+# Python Dotenv - Gestion variables d'environnement
+python-dotenv>=1.0.0
+
+# === HUGGINGFACE INTEGRATION ===
+# HuggingFace Hub - Accès modèles et datasets
+huggingface-hub>=0.18.0
+# Transformers - Modèles transformer pré-entraînés
+transformers>=4.33.0
+
+# === DATA SCIENCE ===
+# NumPy - Opérations matricielles
+numpy>=1.24.3
+
+# === TESTING (développement uniquement) ===
+# Pytest - Framework de test
+pytest>=7.4.2
+pytest-cov>=4.1.0
+
+# === HTTP REQUESTS ===
+# Requests - Appels HTTP (pour Ollama)
+requests>=2.31.0

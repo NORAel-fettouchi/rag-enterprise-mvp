@@ -1,0 +1,15 @@
+venv/
+.env
+
+__pycache__/
+.pytest_cache/
+
+.streamlit/secrets.toml
+
+vectorstore/
+data/
+
+*.pyc
+*.pyo
+*.pkl
+*.faiss
