@@ -16,6 +16,7 @@ import logging
 from pathlib import Path
 import requests
 import sys
+from collections import Counter
 
 # Ajouter le répertoire parent pour les imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -76,10 +77,16 @@ class RAGPipeline:
         Ingérer un PDF complet.
         
         Étapes:
+        0. Réinitialiser le vector store (isolation des documents)
         1. Charger le PDF
         2. Découper en chunks
         3. Générer les embeddings
         4. Ajouter au vector store
+        
+        IMPORTANT (isolation des documents):
+        Le vector store est réinitialisé AVANT d'ingérer le nouveau PDF.
+        Cela garantit que l'index ne contient QUE le document actuellement
+        uploadé — jamais les chunks d'un PDF précédent.
         
         Args:
             pdf_path: Chemin du fichier PDF
@@ -92,14 +99,40 @@ class RAGPipeline:
             RuntimeError: Si l'ingestion échoue
         """
         try:
-            logger.info(f"Ingestion du PDF: {pdf_path}")
+            pdf_path = Path(pdf_path)
+            filename = pdf_path.name
+            logger.info(f"Ingestion du PDF: {filename}")
+            
+            # 0. RÉINITIALISATION COMPLÈTE AVANT INDEXATION
+            # ==================================================
+            # Supprime les chunks de tout document précédent :
+            # - en mémoire (index FAISS + liste de chunks)
+            # - sur le disque (index.faiss + chunks.json)
+            # Cela empêche le mélange entre PDF A et PDF B.
+            # ==================================================
+            previous_sources = self.vectorstore.get_document_sources()
+            if previous_sources:
+                logger.info(
+                    f"[ISOLATION] Réinitialisation du vector store. "
+                    f"Anciens documents présents: {sorted(previous_sources)}"
+                )
+            else:
+                logger.info(
+                    "[ISOLATION] Réinitialisation du vector store "
+                    "(aucun document précédent)"
+                )
+            
+            self.vectorstore.clear_persistent()
             
             # 1. Charger le PDF
             loader = PDFLoader(pdf_path)
             text = loader.load()
             metadata = loader.get_metadata()
             
-            logger.info(f"PDF chargé: {len(text)} caractères")
+            logger.info(
+                f"PDF chargé: {filename} - {len(text)} caractères, "
+                f"{metadata.get('pages', '?')} pages"
+            )
             
             # 2. Chunking
             chunks_list = self.chunker.chunk_text(text, metadata)
@@ -119,12 +152,24 @@ class RAGPipeline:
             # 5. Sauvegarder l'index
             self.vectorstore.save_index()
             
+            # 6. Diagnostic : état du vector store après ingestion
+            vs_stats = self.vectorstore.get_stats()
+            current_sources = self.vectorstore.get_document_sources()
+            logger.info(
+                f"[DIAGNOSTIC] Document: {filename} | "
+                f"Chunks indexés: {vs_stats['nb_chunks']} | "
+                f"Vecteurs: {vs_stats['nb_vectors']} | "
+                f"Documents représentés: {len(current_sources)} "
+                f"({sorted(current_sources) if current_sources else 'aucun'})"
+            )
+            
             stats = {
                 "pdf_path": str(pdf_path),
+                "filename": filename,
                 "text_length": len(text),
                 "num_chunks": len(chunks),
                 "metadata": metadata,
-                "vectorstore_stats": self.vectorstore.get_stats(),
+                "vectorstore_stats": vs_stats,
             }
             
             logger.info(f"Ingestion complétée: {stats}")
@@ -176,11 +221,18 @@ class RAGPipeline:
             self.citation_handler.reset()
             for result in filtered_results:
                 chunk = result["chunk"]
+                # Utiliser source_filename si dispo, sinon title
+                meta = chunk.get("metadata", {})
+                source_file = (
+                    meta.get("source_filename")
+                    or meta.get("title")
+                    or "Unknown"
+                )
                 self.citation_handler.add_source(
                     chunk_id=chunk.get("id"),
                     text=chunk.get("text", ""),
-                    source_file=chunk.get("metadata", {}).get("title", "Unknown"),
-                    page_num=chunk.get("metadata", {}).get("page_num"),
+                    source_file=source_file,
+                    page_num=meta.get("page_num"),
                     similarity_score=result["similarity_score"],
                 )
             
@@ -188,6 +240,17 @@ class RAGPipeline:
                 f"Récupération: {len(filtered_results)} chunks "
                 f"(sur {len(results)} récupérés)"
             )
+            
+            # Diagnostic des sources récupérées
+            if filtered_results:
+                source_counts = Counter(
+                    r["chunk"].get("metadata", {}).get("source_filename", "Unknown")
+                    for r in filtered_results
+                )
+                logger.info(
+                    f"[DIAGNOSTIC] Sources des chunks récupérés: "
+                    f"{dict(source_counts)}"
+                )
             
             return filtered_results
         
@@ -204,7 +267,7 @@ class RAGPipeline:
         """
         Générer une réponse avec un LLM.
         
-        Utilise Ollama (local) ou HuggingFace (API).
+        Utilise HuggingFace Inference API.
         
         Args:
             query: Question de l'utilisateur
@@ -223,8 +286,8 @@ class RAGPipeline:
             # Créer le prompt
             prompt = get_retrieval_qa_prompt(context, query)
             
-            # Générer la réponse avec Ollama
-            response = self._call_ollama(prompt)
+            # Générer la réponse avec HuggingFace Inference API
+            response = self._call_huggingface(prompt)
             
             logger.info(f"Réponse générée: {len(response)} caractères")
             return response
@@ -234,9 +297,9 @@ class RAGPipeline:
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
     
-    def _call_ollama(self, prompt: str) -> str:
+    def _call_huggingface(self, prompt: str) -> str:
         """
-        Appeler Ollama pour générer une réponse.
+        Appeler HuggingFace Inference API pour générer une réponse.
         
         Args:
             prompt: Prompt formaté
@@ -245,34 +308,205 @@ class RAGPipeline:
             Réponse du LLM
         
         Raises:
-            RuntimeError: Si Ollama est indisponible
+            RuntimeError: Si l'API est indisponible ou la clé manquante
         """
+        # Vérifier que la clé API est configurée
+        if not settings.HUGGINGFACE_API_KEY:
+            error = (
+                "HUGGINGFACE_API_KEY n'est pas configurée. "
+                "Ajoutez-la dans le fichier .env."
+            )
+            logger.error(error)
+            raise RuntimeError(error)
+        
         try:
-            url = f"{settings.OLLAMA_BASE_URL}/api/generate"
+            # ===== Construire l'URL de l'API =====
+            # L'URL de base est l'endpoint complet chat/completions.
+            # Le modèle est passé dans le payload, pas dans l'URL.
+            url = settings.HUGGINGFACE_INFERENCE_URL.rstrip("/")
+            model_name = settings.LLM_MODEL.strip()
             
-            payload = {
-                "model": settings.LLM_MODEL,
-                "prompt": prompt,
-                "stream": False,
-                "temperature": 0.1,
+            logger.info("========== HUGGINGFACE API REQUEST ==========")
+            logger.info(f"Model name: {model_name}")
+            # Ne jamais logger l'URL complète si elle contient la clé (normalement non)
+            logger.info(f"Final URL: {url}")
+            
+            headers = {
+                "Authorization": f"Bearer {settings.HUGGINGFACE_API_KEY}",
+                "Content-Type": "application/json",
             }
             
-            response = requests.post(url, json=payload, timeout=120)
-            response.raise_for_status()
+            # Format OpenAI-compatible chat completions
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": settings.LLM_TEMPERATURE,
+                "max_tokens": settings.LLM_MAX_NEW_TOKENS,
+            }
             
-            result = response.json()
-            return result.get("response", "Erreur: pas de réponse du LLM")
-        
-        except requests.exceptions.ConnectionError:
+            # Logs de debug (sans révéler la clé API)
+            logger.info(
+                "Requête HuggingFace Inference API préparée "
+                f"(clé: ****{settings.HUGGINGFACE_API_KEY[-4:]})"
+            )
+            logger.info(
+                f"Request payload: prompt_len={len(prompt)} chars, "
+                f"temperature={settings.LLM_TEMPERATURE}, "
+                f"max_tokens={settings.LLM_MAX_NEW_TOKENS}"
+            )
+            
+            logger.info(
+                f"Appel HuggingFace Inference API: {model_name}, "
+                f"timeout={settings.LLM_TIMEOUT}s"
+            )
+            
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=settings.LLM_TIMEOUT
+            )
+            
+            # LOG DU DEBUG: code de statut et corps de réponse (tronqué)
+            logger.info(f"Response status code: {response.status_code}")
+            
+            # Gestion explicite des erreurs HTTP avec messages actionnables.
+            # IMPORTANT: Ne jamais inclure la clé API ou l'URL complète dans les logs.
+            if response.status_code == 400:
+                error = (
+                    "Erreur HTTP 400 de HuggingFace Inference API: "
+                    f"le modèle '{model_name}' est incompatible avec "
+                    "le provider sélectionné ou la requête est invalide. "
+                    "Vérifiez LLM_MODEL dans le fichier .env "
+                    "(ex: Qwen/Qwen2.5-7B-Instruct)."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            if response.status_code == 401:
+                error = (
+                    "Erreur HTTP 401 de HuggingFace Inference API: "
+                    "clé API invalide ou expirée. "
+                    "Vérifiez HUGGINGFACE_API_KEY dans le fichier .env "
+                    "(https://huggingface.co/settings/tokens)."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            if response.status_code == 403:
+                error = (
+                    "Erreur HTTP 403 de HuggingFace Inference API: "
+                    "accès refusé au modèle. Vérifiez que votre compte "
+                    "a accès au modèle et que la clé API est valide."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            if response.status_code == 404:
+                error = (
+                    "Erreur HTTP 404 de HuggingFace Inference API: "
+                    f"modèle '{model_name}' introuvable. "
+                    "Vérifiez LLM_MODEL dans le fichier .env "
+                    "(ex: Qwen/Qwen2.5-7B-Instruct)."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            if response.status_code == 429:
+                error = (
+                    "Erreur HTTP 429 de HuggingFace Inference API: "
+                    "trop de requêtes (rate limit atteint). "
+                    "Attendez quelques instants et réessayez, "
+                    "ou réduisez la fréquence des requêtes."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            # Toute autre erreur HTTP
+            if response.status_code >= 400:
+                response_body = ""
+                try:
+                    response_body = response.text[:500]
+                except Exception:
+                    response_body = "<non lisible>"
+                error = (
+                    f"Erreur HTTP {response.status_code} de "
+                    "HuggingFace Inference API. "
+                    f"Réponse: {response_body}"
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            # Succès: parser le corps JSON (sans le logger en entier)
+            try:
+                result = response.json()
+            except ValueError:
+                error = (
+                    "Réponse invalide de HuggingFace Inference API: "
+                    "le corps n'est pas du JSON valide."
+                )
+                logger.error(error)
+                raise RuntimeError(error)
+            
+            # Format OpenAI-compatible chat completions:
+            # {"choices": [{"message": {"content": "..."}}]}
+            if isinstance(result, dict) and result.get("choices"):
+                choices = result["choices"]
+                if choices and isinstance(choices[0], dict):
+                    message = choices[0].get("message", {})
+                    generated = message.get("content", "")
+                    if generated:
+                        logger.info(
+                            f"Parsed response: chat completion "
+                            f"({len(generated)} chars)"
+                        )
+                        return generated.strip()
+            
+            # Fallback: réponse directe sous forme de string
+            if isinstance(result, str):
+                logger.info(
+                    f"Parsed response: raw string ({len(result)} chars)"
+                )
+                return result.strip()
+            
             error = (
-                f"Impossible de se connecter à Ollama ({settings.OLLAMA_BASE_URL}). "
-                "Assurez-vous qu'Ollama est lancé."
+                "Format de réponse inattendu de HuggingFace Inference API: "
+                "le JSON ne correspond pas à chat completions."
+            )
+            logger.error(error)
+            raise RuntimeError(error)
+        
+        except requests.exceptions.Timeout:
+            error = (
+                f"Timeout lors de l'appel à HuggingFace Inference API "
+                f"({settings.LLM_TIMEOUT}s). Le modèle peut être en cours "
+                "de chargement ou surchargé."
+            )
+            logger.error(error)
+            raise RuntimeError(error)
+        
+        except requests.exceptions.ConnectionError as e:
+            error = (
+                "Impossible de se connecter à HuggingFace Inference API "
+                f"({settings.HUGGINGFACE_INFERENCE_URL}). "
+                "Vérifiez votre connexion internet. "
+                f"Détail: {e}"
+            )
+            logger.error(error)
+            raise RuntimeError(error)
+        
+        except requests.exceptions.InvalidURL as e:
+            error = (
+                "URL invalide pour HuggingFace Inference API: "
+                f"{e}. Vérifiez HUGGINGFACE_INFERENCE_URL dans le fichier .env."
             )
             logger.error(error)
             raise RuntimeError(error)
         
         except Exception as e:
-            error_msg = f"Erreur Ollama: {e}"
+            error_msg = f"Erreur HuggingFace Inference API: {e}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
     
@@ -312,4 +546,11 @@ class RAGPipeline:
     
     def get_vectorstore_stats(self) -> Dict[str, Any]:
         """Retourner les statistiques du vector store."""
-        return self.vectorstore.get_stats()
+        stats = self.vectorstore.get_stats()
+        
+        # Ajouter le nombre de documents représentés
+        sources = self.vectorstore.get_document_sources()
+        stats["nb_documents"] = len(sources)
+        stats["documents"] = sorted(sources) if sources else []
+        
+        return stats

@@ -45,14 +45,21 @@ class Settings:
         
         # ===== RETRIEVAL =====
         self.TOP_K = int(os.getenv("TOP_K", "5"))
-        self.SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.3"))
+        self.SIMILARITY_THRESHOLD = float(os.getenv("SIMILARITY_THRESHOLD", "0.1"))
         
         # ===== LLM =====
-        self.LLM_TYPE = os.getenv("LLM_TYPE", "ollama")
-        self.LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
+        self.LLM_TYPE = os.getenv("LLM_TYPE", "huggingface")
+        self.LLM_MODEL = os.getenv(
+            "LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"
+        )
         self.HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
-        self.OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        self.HUGGINGFACE_INFERENCE_URL = os.getenv(
+            "HUGGINGFACE_INFERENCE_URL",
+            "https://router.huggingface.co/v1/chat/completions"
+        )
         self.LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+        self.LLM_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", "512"))
+        self.LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT", "120"))
         
         # ===== APP =====
         self.APP_TITLE = os.getenv("APP_TITLE", "RAG Documentaire d'Entreprise")

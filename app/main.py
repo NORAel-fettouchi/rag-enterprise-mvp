@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Optional
 import tempfile
 
-from config import settings
-from rag_pipeline import RAGPipeline
+from app.config import settings
+from app.rag_pipeline import RAGPipeline
 
 # Configuration logging
 logging.basicConfig(
@@ -97,6 +97,16 @@ def main():
         st.metric("🗂️ Chunks totaux", stats["nb_chunks"])
         st.metric("📐 Dimensions embedding", stats["embedding_dim"])
         
+        # Afficher les documents actuellement indexés
+        if stats.get("nb_documents", 0) > 0:
+            doc_names = ", ".join(stats.get("documents", []))
+            st.caption(
+                f"📄 Document(s) actif(s): {doc_names}\n"
+                f"🔢 Nombre de documents: {stats['nb_documents']}"
+            )
+        else:
+            st.caption("📄 Aucun document indexé")
+        
         # Section upload
         st.subheader("📤 Upload PDF")
         uploaded_file = st.file_uploader(
@@ -119,6 +129,9 @@ def main():
                     
                     # Ingérer le PDF
                     ingest_stats = rag_pipeline.ingest_pdf(tmp_path)
+                    
+                    # Rafraîchir les stats après ingestion
+                    stats = rag_pipeline.get_vectorstore_stats()
                     
                     st.success(
                         f"✅ PDF ingéré avec succès!\n"
@@ -239,8 +252,12 @@ def main():
                             if meta:
                                 cols = st.columns(3)
                                 with cols[0]:
-                                    if "title" in meta:
-                                        st.caption(f"📄 {meta['title']}")
+                                    source_file = (
+                                        meta.get("source_filename")
+                                        or meta.get("title")
+                                        or "Unknown"
+                                    )
+                                    st.caption(f"📄 {source_file}")
                                 with cols[1]:
                                     if "page_num" in meta:
                                         st.caption(f"📖 Page {meta['page_num']}")

@@ -80,12 +80,12 @@ class TextChunker:
                 len(current_chunk) + len(paragraph) > self.chunk_size
                 and current_chunk
             ):
-                # Sauvegarder le chunk
+                # Sauvegarder le chunk (avec une copie des métadonnées)
                 self.chunks.append({
                     "id": chunk_id,
                     "text": current_chunk.strip(),
                     "size": len(current_chunk),
-                    "metadata": metadata,
+                    "metadata": self._enrich_metadata(metadata, current_chunk),
                 })
                 chunk_id += 1
                 
@@ -101,7 +101,7 @@ class TextChunker:
                 "id": chunk_id,
                 "text": current_chunk.strip(),
                 "size": len(current_chunk),
-                "metadata": metadata,
+                "metadata": self._enrich_metadata(metadata, current_chunk),
             })
         
         logger.info(
@@ -110,6 +110,40 @@ class TextChunker:
         )
         
         return [chunk["text"] for chunk in self.chunks]
+    
+    def _enrich_metadata(
+        self,
+        metadata: Dict[str, Any],
+        chunk_text: str
+    ) -> Dict[str, Any]:
+        """
+        Enrichir les métadonnées d'un chunk.
+        
+        Copie le dict de métadonnées (évite les références partagées)
+        et extrait le numéro de page depuis le marker [Page N] du texte.
+        
+        Args:
+            metadata: Métadonnées de base du document
+            chunk_text: Texte du chunk (peut contenir [Page N])
+        
+        Returns:
+            Copie des métadonnées avec source_filename et page_num
+        """
+        enriched = dict(metadata)
+        
+        # Extraire les numéros de page depuis le texte (markers [Page N])
+        import re
+        page_markers = re.findall(r"\[Page (\d+)\]", chunk_text)
+        if page_markers:
+            enriched["page_num"] = int(page_markers[0])
+        else:
+            enriched["page_num"] = None
+        
+        # Garantir un nom de fichier source
+        if "source_filename" not in enriched or not enriched["source_filename"]:
+            enriched["source_filename"] = enriched.get("title", "Unknown.pdf")
+        
+        return enriched
     
     def _clean_text(self, text: str) -> str:
         """

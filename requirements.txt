@@ -39,5 +39,5 @@ pytest>=7.4.2
 pytest-cov>=4.1.0
 
 # === HTTP REQUESTS ===
-# Requests - Appels HTTP (pour Ollama)
+# Requests - Appels HTTP (pour HuggingFace Inference API)
 requests>=2.31.0

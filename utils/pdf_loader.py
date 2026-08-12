@@ -65,12 +65,14 @@ class PDFLoader:
                         "title": pdf_reader.metadata.get("/Title", "Unknown"),
                         "author": pdf_reader.metadata.get("/Author", "Unknown"),
                         "pages": len(pdf_reader.pages),
+                        "source_filename": self.file_path.name,
                     }
                 else:
                     self.metadata = {
                         "title": self.file_path.stem,
                         "author": "Unknown",
                         "pages": len(pdf_reader.pages),
+                        "source_filename": self.file_path.name,
                     }
                 
                 # Extraire le texte page par page

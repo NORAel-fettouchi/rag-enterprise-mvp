@@ -13,3 +13,4 @@ data/
 *.pyo
 *.pkl
 *.faiss
+.continue/

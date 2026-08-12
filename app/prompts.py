@@ -86,8 +86,13 @@ def format_context(retrieved_chunks: list) -> str:
         similarity = chunk_data.get("similarity_score", 0)
         
         # Créer une section pour chaque chunk
-        source = metadata.get("title", "Document") or "Document"
-        page = chunk.get("metadata", {}).get("page_num")
+        # Utiliser le nom de fichier source si disponible, sinon le titre
+        source = (
+            metadata.get("source_filename", "")
+            or metadata.get("title", "")
+            or "Document"
+        )
+        page = metadata.get("page_num")
         
         section = f"[Source {i}: {source}"
         if page:
