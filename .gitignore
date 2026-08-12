@@ -14,3 +14,9 @@ data/
 *.pkl
 *.faiss
 .continue/
+
+test_debug_fix.py
+test_document_isolation.py
+test_full_pipeline.py
+test_hf_chat.py
+test_hf_connectivity.py
