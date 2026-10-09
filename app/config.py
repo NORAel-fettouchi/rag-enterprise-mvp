@@ -16,8 +16,14 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
-# Charger les variables d'env depuis .env
-load_dotenv()
+# Charger les variables d'env depuis .env situé à la racine du projet
+# (Streamlit peut changer le CWD, donc on spécifie explicitement le .env à la racine)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+else:
+    # fallback to default behavior (chercher dans le CWD)
+    load_dotenv()
 
 
 class Settings:
@@ -50,7 +56,7 @@ class Settings:
         # ===== LLM =====
         self.LLM_TYPE = os.getenv("LLM_TYPE", "huggingface")
         self.LLM_MODEL = os.getenv(
-            "LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct"
+            "LLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct"
         )
         self.HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
         self.HUGGINGFACE_INFERENCE_URL = os.getenv(

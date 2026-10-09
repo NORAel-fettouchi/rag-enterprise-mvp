@@ -11,11 +11,15 @@ Permet:
 import streamlit as st
 import logging
 from pathlib import Path
+import sys
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 from typing import Optional
 import tempfile
 
 from app.config import settings
-from app.rag_pipeline import RAGPipeline
+from app.rag_pipeline_fixed import RAGPipeline
 
 # Configuration logging
 logging.basicConfig(
@@ -170,6 +174,39 @@ def main():
             f"⚡ Modèle: {settings.EMBEDDING_MODEL}\n"
             f"🔄 LLM: {settings.LLM_MODEL}"
         )
+
+        # Vérifier la clé Hugging Face et alerter l'utilisateur
+        if not settings.HUGGINGFACE_API_KEY or 'METTEZ' in (settings.HUGGINGFACE_API_KEY or ''):
+            st.warning(
+                "HUGGINGFACE_API_KEY absent ou placeholder. Configurez votre clé dans le fichier .env à la racine du projet "
+                "puis redémarrez Streamlit. Exemple: HUGGINGFACE_API_KEY=sk_xxx"
+            )
+            with st.expander("Comment obtenir une clé Hugging Face"):
+                st.markdown(
+                    "1. Connectez-vous sur https://huggingface.co/.\n"
+                    "2. Allez dans Settings → Access Tokens.\n"
+                    "3. Créez un token avec le scope 'api' et copiez-le dans .env.\n"
+                    "4. Redémarrez Streamlit: `streamlit run app/main.py`"
+                )
+
+            # Bouton pour tester rapidement la clé HF (n'exécute pas de génération complète)
+            if st.button("Tester la clé Hugging Face"):
+                with st.spinner("Test de la clé HF..."):
+                    result = rag_pipeline.validate_hf_key()
+                    if result.get("ok"):
+                        st.success("Clé Hugging Face valide (test réussi).")
+                    else:
+                        st.error(f"Échec test HF: {result.get('message')}")
+        else:
+            # Même bouton pour tester la clé si déjà présente
+            if st.button("Tester la clé Hugging Face"):
+                with st.spinner("Test de la clé HF..."):
+                    result = rag_pipeline.validate_hf_key()
+                    if result.get("ok"):
+                        st.success("Clé Hugging Face valide (test réussi).")
+                    else:
+                        st.error(f"Échec test HF: {result.get('message')}")
+
     
     # Zone principale
     col1, col2 = st.columns([3, 1])
